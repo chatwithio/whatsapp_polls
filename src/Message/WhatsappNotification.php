@@ -1,5 +1,6 @@
 <?php
 
+
 namespace App\Message;
 
 class WhatsappNotification

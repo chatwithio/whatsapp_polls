@@ -95,12 +95,12 @@ class MessageService
                 if ($request->getStatusCode() == 200 || $request->getStatusCode() == 201) {
                     return json_decode($request->getContent());
                 } else {
-                    throw new Exception($request->getBody()->getContents());
+                    throw new \Exception($request->getContent());
                 }
             } else {
-                throw new Exception('Unvalidated payload Exception');
+                throw new \Exception('Unvalidated payload Exception');
             }
-        } catch (Exception $exception) {
+        } catch (\Exception $exception) {
             $this->logErrors($exception);
         }
     }
@@ -233,7 +233,7 @@ class MessageService
         return $this->send('template');
     }
 
-    private function logErrors(Exception $exception)
+    private function logErrors(\Exception $exception)
     {
         print "ERROR LOGGED:" . $exception->getMessage() . "\n";
     }

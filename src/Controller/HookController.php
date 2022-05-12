@@ -3,7 +3,6 @@
 namespace App\Controller;
 
 use App\Message\WhatsappNotification;
-use Exception;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\Messenger\MessageBusInterface;
@@ -12,10 +11,13 @@ use App\Service\MessageService;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\HttpFoundation\Request;
 use Doctrine\Persistence\ManagerRegistry;
-use App\Entity\Messages;
+use App\Entity\PollMessage;
 
 class HookController extends AbstractController
 {
+
+    private $setIdText;
+
     #[Route('/hook-endpoint', name: 'hook_endpoint1')]
     // POST
     public function whatsappHook(MessageBusInterface $bus,  Request $request): Response
@@ -30,15 +32,15 @@ class HookController extends AbstractController
                         "profile": {
                             "name": "Ward"
                         },
-                        "wa_id": "34622814642"
+                        "wa_id": "34697110110"
                     }
                 ],
                 "messages": [
                     {
-                        "from": "34622814642",
+                        "from": "34697110110",
                         "id": "ABGGNGIoFGQvAgo-sAr3kcI5DI30",
                         "text": {
-                            "body": "Test from ward"
+                            "body": "1"
                         },
                         "timestamp": "1640174341",
                         "type": "text"
@@ -50,7 +52,7 @@ class HookController extends AbstractController
          *
          */
 
-        //$messageService->sendWhatsAppText("34622814642","Hi there");
+
 
         $content = $request->getContent();
 
@@ -61,6 +63,7 @@ class HookController extends AbstractController
             'message' => 'Message ok!',
         ]);
     }
+
     #[Route('/chatwith-endpoint', name: 'chatwith_endpoint1')]
     // POST
     public function index(
@@ -73,7 +76,7 @@ class HookController extends AbstractController
         $json = json_decode($content); //decode JSON and obtain data
         $status = "KO";
         $message = " ";
-        $setIdText = "";
+
 
         $placeholders = [
             $json -> q1,
@@ -88,37 +91,46 @@ class HookController extends AbstractController
         if (!is_numeric($json->number)) {
             $message = 'This is not a number';
         }else{
+            $isfirst=true;
+            foreach($json->numbers_poll as $user){
             try{
+                
                 $messageService->sendWhatsApp(
-                    $json->number, //Number
+                    $user, //Number
                     $placeholders, //Placeholders
                     'poll', //template
                     'en', //language
                     'f6baa15e_fb52_4d4f_a5a0_cde307dc3a85');
 
                 $status = "OK";
-                $setIdText = "0";
+                $this->setIdText=0;
             }
-            catch(Exception $exception){
+            catch(\Exception $exception){
                 dd($exception->getMessage());
             }
 
-            if($status == "OK"){
+            if($status == "OK" ){
+                
                 try {
+                    
                     $entityManager = $doctrine->getManager();
-                    $date = date("Y-m-d H:i:s");
-                    $messages = new Messages();
-                    $messages->setIdText($setIdText);
-                    $messages->setWaId($json->number);
+                    $messages = new PollMessage();
+                    $messages->setIdText($this->setIdText);
+                    $messages->setWaId($user);
                     $messages->setText("Template text"); // "template"
-                    $messages->setCreated($date);
+                    $messages->setFirstmessage($isfirst);
+                    $messages->setPollid(md5($json -> q1));
+                    //$message->setMessagesent();
                     $entityManager->persist($messages);
                     $entityManager->flush();
                 }
-                catch (Exception $exception){
+                catch (\Exception $exception){
                     $logger->error($exception->getMessage());
                 }
             }
+        
+            $isfirst=false;
+        }
 
         }
 
@@ -127,4 +139,58 @@ class HookController extends AbstractController
             'message' => $message
         ]);
     }
+
+    
+    #[Route('/cron-endpoint', name: 'cron_endpoint1')]
+    // POST
+    public function cron(ManagerRegistry $doctrine,MessageService $messageService): Response{
+
+        //Recibimos el cron - see crontab -e
+
+        ////1. Buscamos los mensajes que  han cuaducado y q no tienen bandera enviado
+        ///
+        $expired = $doctrine->getRepository(PollMessage::class)->getExpiredMessages();
+        foreach($expired as $item){
+    
+            
+            $countOne = $doctrine->getRepository(PollMessage::class)
+            ->count(array('text' => 1, 'wa_id'=> $item->getWaId(), 'pollid'=> $item->getPollid()));
+        
+            $countTwo = $doctrine->getRepository(PollMessage::class)
+            ->count(array('text' => 2, 'wa_id'=> $item->getWaId(), 'pollid'=> $item->getPollid()));
+
+            $countThree = $doctrine->getRepository(PollMessage::class)
+            ->count(array('text' => 3, 'wa_id'=> $item->getWaId(), 'pollid'=> $item->getPollid()));
+            $countFour = $doctrine->getRepository(PollMessage::class)
+            ->count(array('text' => 4, 'wa_id'=> $item->getWaId(), 'pollid'=> $item->getPollid()));
+
+            $resultsPoll = "The results of the poll are the followings
+            Answer 1: $countOne votes.
+            Answer 2: $countTwo votes.
+            Answer 3: $countThree votes.
+            Answer 4: $countFour votes.";
+
+            /// 2. enviar un whatsapp a cada uno
+             /// 
+    
+
+            $messageService->sendWhatsAppText(
+                $item->getWaId(),
+                $resultsPoll
+                
+            ); 
+
+            /// 3. cerrarlo - cambiar la bandera
+            $item->setMessagesent(true);
+            $doctrine->getManager()->persist($item);
+            $doctrine->getManager()->flush();
+
+        }
+    
+        return $this->json([
+            'status' => 'OK',
+            'message' => ' '
+        ]);
+    } 
+
 }

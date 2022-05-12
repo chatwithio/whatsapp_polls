@@ -3,26 +3,30 @@
 // src/MessageHandler/SmsNotificationHandler.php
 namespace App\MessageHandler;
 
-use App\Entity\Messages;
+use App\Entity\PollMessage;
 use App\Message\WhatsappNotification;
 use App\Service\MessageService;
 use DateTimeInterface;
 use Psr\Log\LoggerAwareInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\Messenger\Attribute\AsMessageHandler;
-use App\Repository\MessagesRepository;
+use App\Repository\PollMessageRepository;
 use App\Service\BotService;
 use App\Service\WhatsappService;
 use Doctrine\ORM\EntityManagerInterface;
 use GuzzleHttp\Psr7\Message;
 
+
 #[AsMessageHandler]
 class WhatsappNotificationHandler
 {
     private $logger;
-    private  $em;
+    private $em;
     private $messageService;
     private $doctrine;
+    private $textToBeSent;
+    private $textType;
+
 
     public function __construct(LoggerInterface $logger, MessageService $messageService, EntityManagerInterface $em, EntityManagerInterface $doctrine)
     {
@@ -34,42 +38,71 @@ class WhatsappNotificationHandler
 
     public function __invoke(WhatsappNotification $message)
     {
+
         $content = $message->getContent();
         $jsonDecodedMessage = json_decode($content);
 
-       // $this->logger->info("Message sent!");
+
+        // $this->logger->info("Message sent!");
+        if (!isset($jsonDecodedMessage->messages)) {
+            return;
+        }
+
         $mensaje = $jsonDecodedMessage->{'contacts'};
 
 
-        $previousMessage = $this->getPreviousMessage($mensaje[0]->wa_id);
+        foreach ($jsonDecodedMessage->{'contacts'} as $item){
+        $previouspoll = $this->getPreviousMessage($item->wa_id);
+          if($this->doctrine->getRepository(PollMessage::class)->checkSentMessage($item->wa_id, $previouspoll->getPollid())){
 
-        if($previousMessage){
+            $this->messageService->sendWhatsAppText(
+               $item->wa_id,
+               "You have already answered in the poll."
+              
+            );
+            return;
+          
+        }
+    }
 
-            $this->textType= -1;
 
-            //decide what/if we send a message
+        //foreach
+         foreach ($jsonDecodedMessage->{'contacts'} as $item){
+             
+        //process each one
+            
+            $previousMessage = $this->getPreviousMessage($item->wa_id);
 
-            $textToBeSent =  $this->gettextToBeSent($previousMessage, $jsonDecodedMessage);
-            //send the message
+                $sentThanks = false;
 
-            $m = $this->sendMessage($textToBeSent, $jsonDecodedMessage);
+                if ($previousMessage){
 
-            //save the data to the database
-            $this->saveData($m);
+                    $this->textToBeSent = " ";
+                
+                    $this->textToBeSent = 'This is not a valid answer, sorry';
+        
+                    //decide what/if we send a message
+        
+                    $texto = $this->gettextToBeSent($previousMessage, $jsonDecodedMessage);
+        
+                   if($sentThanks==false){
+                     $m = $this->sendMessage($jsonDecodedMessage);
+                        $sentThanks=true;
+                        $this->saveData($previousMessage);
+                  //die;
+                     }
 
-            //wait 2 hours until we send the results of the poll
-            sleep(10); //7200 secs = 2 hours
+                    //save the data to the database
+                     
 
-            //send results form the poll and then store the message
-            $result = $this->resultsPoll($m);
-            $this->saveData($result);
+             }
         }
 
 
+    
     }
-
     private function getPreviousMessage($waId){
-        return $this->em->getRepository(Messages::class)->findOneBy([
+        return $this->em->getRepository(PollMessage::class)->findOneBy([
             'wa_id' => $waId
         ],
             [
@@ -83,71 +116,53 @@ class WhatsappNotificationHandler
 
         $msg_messages = $message->{'messages'};
         $textMessage = $msg_messages[0]->text->body;
-        $textToBeSent = 'This is not a valid answer, sorry';
-        $textType=-1;
 
+        $textType = -1;
+        $textToBeSent = " ";
 
-        if ($prevText == '1') {  //get text of the next message depending on the previous message
-            $textToBeSent = "Thanks for answering the poll!";
-            $this->textType=01;
-        }else if($prevText == '2'){
-            $textToBeSent = "Thanks for answering the poll!";
-            $this->textType=02;
-        }else if($prevText == '3'){
-            $textToBeSent = "Thanks for answering the poll!";
-            $this->textType=03;
-        } else if($prevText == '4'){
-            $textToBeSent = "Thanks for answering the poll!";
-            $this->textType=04;
+        if ($prevText == "Template text") {
+            if ($textMessage == '1') {  //get text of the next message depending on the previous message
+                $this->textToBeSent = "Thanks for answering the poll!";
+                $this->textType = 1;
+            } else if ($textMessage == '2') {
+                $this->textToBeSent = "Thanks for answering the poll!";
+                $this->textType = 2;
+            } else if ($textMessage == '3') {
+                $this->textToBeSent = "Thanks for answering the poll!";
+                $this->textType = 3;
+            } else if ($textMessage == '4') {
+                $this->textToBeSent = "Thanks for answering the poll!";
+                $this->textType = 4;
+            }
+        } else {
+
+            return;
         }
 
         return $textToBeSent;
     }
 
-    private function sendMessage($textToBeSent,$message){  //send message with text depending on previous message
+    private function sendMessage($message)
+    {  //send message with text depending on previous message
         $msg = $message->{'contacts'};
+
         $this->messageService->sendWhatsAppText(
             $msg[0]->wa_id,
-            $textToBeSent
+            $this->textToBeSent
         );
+        $sentThanks = true;
         return $message;
     }
 
-    private function saveData($message){ //save data of the sent message
+    private function saveData($message)
+    { //save data of the sent message
 
-        $msg_contacts = $message -> {'contacts'};
-        $msg_messages = $message ->{'messages'};
-        $messages = new Messages();
-        $messages->setWaId($msg_contacts[0]->wa_id);
-        $messages->setText($msg_messages[0]->text->body); // "template"
-        $messages->setIdText($this->textType);
-        $this->em->persist($messages);
+        $message->setText($this->textType); 
+
+        $this->em->persist($message);
         $this->em->flush();
     }
-    private function resultsPoll($message){
-        //count results of the poll with a query
-
-        $countRed =  $this->em->getRepository(Messages::class)->count(array('text' => 1));
-        $countBlue = $this->em->getRepository(Messages::class)->count(array('text' => 2));
-        $countYellow = $this->em->getRepository(Messages::class)->count(array('text' => 3));
-        $countGreen = $this->em->getRepository(Messages::class)->count(array('text' => 4));
-
-        $resultsPoll = "The results of the poll are the followings
-        Red: $countRed votes.
-        Blue: $countBlue votes.
-        Yellow: $countYellow votes.
-        Green: $countGreen votes.";
-
-        $this->textType=1;
-
-        $msg = $message->{'contacts'};
-
-        $this->messageService->sendWhatsAppText(
-            $msg[0]->wa_id,
-            $resultsPoll
-        );
-        return $message;
 
 
-    }
 }
+
